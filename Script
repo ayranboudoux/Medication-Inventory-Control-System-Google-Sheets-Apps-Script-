@@ -1,0 +1,199 @@
+/* SCRIPT COMPLETO E ROBUSTO
+   - onEdit: preenche Descrição e Laboratório na aba "Entrada" e "Saida"
+   - registrarEntrada / registrarSaida: processam apenas linhas NÃO registradas (coluna G = Status)
+   - registrarMovimento: atualiza estoque (cria/soma ou subtrai)
+   - primeiraLinhaVazia: encontra linha livre no estoque
+   - checkSetup: função de diagnóstico que você pode executar manualmente para ver problemas
+*/
+
+function onEdit(e) {
+  if (!e) return;
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = e.source.getActiveSheet();
+  const range = e.range;
+
+  // Só funciona nas abas Entrada ou Saida
+  if (sheet.getName() !== "Entrada" && sheet.getName() !== "Saida") return;
+
+  const linha = range.getRow();
+  const coluna = range.getColumn();
+
+  // Só dispara quando editar a coluna A (Código de Barras)
+  if (coluna !== 1 || linha === 1) return;
+
+  const codigo = String(range.getValue()).trim();
+  if (!codigo) return;
+
+  // Buscar dados na aba PRODUTOS
+  const abaProdutos = ss.getSheetByName("Produtos");
+  if (!abaProdutos) return;
+  const lastProd = abaProdutos.getLastRow();
+  if (lastProd < 2) return;
+  const dados = abaProdutos.getRange(2, 1, lastProd - 1, 3).getValues();
+
+  // Procurar o código digitado na coluna A da aba Produtos
+  const encontrado = dados.find(linhaProd => String(linhaProd[0]).trim() === codigo);
+
+  if (encontrado) {
+    const descricao = encontrado[1];  // Coluna B
+    const laboratorio = encontrado[2]; // Coluna C
+
+    // Escrever na planilha Entrada/Saida
+    sheet.getRange(linha, 2).setValue(descricao);   // Coluna B
+    sheet.getRange(linha, 3).setValue(laboratorio); // Coluna C
+  } else {
+    sheet.getRange(linha, 2).setValue("NÃO ENCONTRADO");
+    sheet.getRange(linha, 3).setValue("");
+  }
+}
+
+
+function registrarEntrada() { registrarMovimento("Entrada", 1); }
+function registrarSaida()   { registrarMovimento("Saida", -1); }
+
+function registrarMovimento(abaNome, operacao) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const aba = ss.getSheetByName(abaNome);
+  const estoqueNome = "Estoque"; // ajuste aqui se sua aba tiver outro nome
+  const estoque = ss.getSheetByName(estoqueNome);
+  const colunaStatus = 7; // G
+
+  if (!aba) { SpreadsheetApp.getUi().alert("ERRO: aba '" + abaNome + "' não encontrada."); return; }
+  if (!estoque) { SpreadsheetApp.getUi().alert("ERRO: aba '" + estoqueNome + "' não encontrada."); return; }
+
+  const ultimaLinha = aba.getLastRow();
+  if (ultimaLinha < 2) { SpreadsheetApp.getUi().alert("Nenhum produto para registrar na aba " + abaNome + "."); return; }
+
+  const numLinhasAba = Math.max(0, ultimaLinha - 1);
+  // Agora lemos 8 colunas da aba (A..H) onde H é TIPO na sua estrutura atual
+  const dados = aba.getRange(2, 1, numLinhasAba, 8).getValues();
+
+  // lê estoque em memória (9 colunas A..I, onde I = Tipo)
+  const estoqueLast = estoque.getLastRow();
+  const numLinhasEstoque = Math.max(0, estoqueLast - 1);
+  let listaEstoque = numLinhasEstoque > 0 ? estoque.getRange(2, 1, numLinhasEstoque, 9).getValues() : [];
+
+  let processados = 0;
+  for (let i = 0; i < dados.length; i++) {
+    const linha = dados[i];
+    const codigo = linha[0];
+    const nome = linha[1];
+    const lab = linha[2];
+    const validade = linha[3];
+    const lote = linha[4];
+    const quantidade = Number(linha[5]);
+    const status = linha[6]; // coluna G da aba Entrada/Saida
+    const tipo = linha[7];   // coluna H da aba Entrada/Saida
+
+    // pula se já registrado (coluna G preenchida)
+    if (status && String(status).trim() !== "") continue;
+    if (!codigo || !quantidade) continue;
+
+    let atualizado = false;
+
+    // procura no estoque (usa listaEstoque atualizada)
+    for (let j = 0; j < listaEstoque.length; j++) {
+      const codE  = listaEstoque[j][0];
+      const valE  = listaEstoque[j][3];
+      const loteE = listaEstoque[j][4];
+      const qtdE  = Number(listaEstoque[j][5]);
+
+      if (String(codE) === String(codigo) && String(valE) === String(validade) && String(loteE) === String(lote)) {
+        // calcula nova quantidade (pode somar ou subtrair)
+        let novaQtd = qtdE + operacao * quantidade;
+        if (novaQtd < 0) {
+          SpreadsheetApp.getUi().alert("ERRO: Estoque insuficiente para saída do produto " + codigo + " (linha " + (i+2) + ").");
+          return;
+        }
+
+        // atualiza no sheet e na memória
+        estoque.getRange(j + 2, 6).setValue(novaQtd); // coluna F = Quantidade
+        listaEstoque[j][5] = novaQtd;
+        // se tipo estiver vazio no estoque, preenche com o tipo vindo da entrada
+        if ((!listaEstoque[j][8] || String(listaEstoque[j][8]).trim() === "") && tipo) {
+          listaEstoque[j][8] = tipo;
+          estoque.getRange(j + 2, 9).setValue(tipo); // coluna I = Tipo
+        }
+
+        atualizado = true;
+        break;
+      }
+    }
+
+    // ... dentro do loop, no lugar do bloco que cria novo registro:
+if (!atualizado) {
+  if (operacao === -1) {
+    SpreadsheetApp.getUi().alert("ERRO: Produto " + codigo + " não encontrado no estoque (linha " + (i+2) + ").");
+    return;
+  }
+
+  const novaLinha = primeiraLinhaVazia(estoque);
+
+  // 1) escreve apenas A..F (Código, Nome, Lab, Validade, Lote, Quantidade)
+  estoque.getRange(novaLinha, 1, 1, 6).setValues([[
+    codigo,
+    nome,
+    lab,
+    validade,
+    lote,
+    quantidade
+  ]]);
+
+  // 2) escreve H (Observação) e I (Tipo) separadamente — não tocamos G (Status)
+  estoque.getRange(novaLinha, 8).setValue("");           // coluna H = Observação (vazia)
+  estoque.getRange(novaLinha, 9).setValue(tipo || "");   // coluna I = Tipo
+
+  // 3) se a célula G (Status) estiver vazia e existir fórmula na linha acima, copia a fórmula
+  try {
+    const linhaAbaixo = novaLinha - 1;
+    if (linhaAbaixo >= 2) { // existe linha acima de dados
+      const formulaAcima = estoque.getRange(linhaAbaixo, 7).getFormula();
+      const valorAcima = estoque.getRange(linhaAbaixo, 7).getValue();
+      // só copia se havia fórmula (não copia valores fixos)
+      if (formulaAcima && String(formulaAcima).trim() !== "") {
+        estoque.getRange(novaLinha, 7).setFormula(formulaAcima);
+      } else {
+        // se não havia fórmula, tenta preservar valor (ou deixa vazio)
+        // não sobrescrevemos nada para evitar apagar uma fórmula customizada
+      }
+    }
+  } catch(err) {
+    // se algo falhar, não interrompe o processamento
+    Logger.log("Erro ao tentar copiar fórmula da coluna G: " + err);
+  }
+
+  // atualiza lista em memória
+  listaEstoque.push([codigo, nome, lab, validade, lote, quantidade, "", "", tipo || ""]);
+}
+
+    // marca histórico na aba Entrada/Saida (coluna G)
+    aba.getRange(i + 2, colunaStatus).setValue("Registrado em " + new Date().toLocaleString("pt-BR"));
+    processados++;
+  }
+
+  if (processados === 0) SpreadsheetApp.getUi().alert("Nenhuma linha nova para processar na aba '" + abaNome + "'.");
+  else SpreadsheetApp.getUi().alert("Processados " + processados + " item(ns) da aba '" + abaNome + "'.");
+}
+
+function primeiraLinhaVazia(sheet) {
+  const last = sheet.getLastRow();
+  if (last < 2) return 2;
+  const dados = sheet.getRange(2, 1, last - 1, 1).getValues();
+  for (let i = 0; i < dados.length; i++) {
+    if (!dados[i][0]) return i + 2;
+  }
+  return last + 1;
+}
+
+// Função de diagnóstico: roda manualmente no editor para ver se tudo está ok
+function checkSetup() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const names = ["Entrada","Saida","Estoque","Produtos"];
+  let msg = "";
+  names.forEach(n => {
+    const s = ss.getSheetByName(n);
+    msg += n + ": " + (s ? "OK (linhas=" + s.getLastRow() + ")" : "NÃO ENCONTRADA") + "\n";
+  });
+  SpreadsheetApp.getUi().alert(msg);
+  Logger.log(msg);
+}
