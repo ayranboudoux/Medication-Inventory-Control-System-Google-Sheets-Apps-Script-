@@ -4,43 +4,43 @@ This project is an automated medication inventory control system developed using
 
 # Features
 
-Automated inbound (entry) and outbound (exit) medication records
+- Automated inbound (entry) and outbound (exit) medication records
 
-Dynamic inventory updates (quantity increase or decrease)
+- Dynamic inventory updates (quantity increase or decrease)
 
-Automatic data population using barcode input
+- Automatic data population using barcode input
 
-Control by batch, expiration date, laboratory, and type
+- Control by batch, expiration date, laboratory, and type
 
-Movement history logging with date and time
+- Movement history logging with date and time
 
-Duplicate prevention (processes only unregistered rows)
+- Duplicate prevention (processes only unregistered rows)
 
-Automatic detection of the first empty row in the inventory
+- Automatic detection of the first empty row in the inventory
 
-Diagnostic function (checkSetup) for sheet validation
+- Diagnostic function (checkSetup) for sheet validation
 
 
 # System Logic
 
-The onEdit trigger is fired when editing the barcode column in the Entry or Exit sheets
+- The onEdit trigger is fired when editing the barcode column in the Entry or Exit sheets
 
-Data is automatically retrieved from the Products sheet
+- Data is automatically retrieved from the Products sheet
 
-Movements are recorded only if the status field is empty
+- Movements are recorded only if the status field is empty
 
-Inventory updates are handled safely, preserving existing formulas
+- Inventory updates are handled safely, preserving existing formulas
 
-All actions are logged for audit and tracking purposes
+- All actions are logged for audit and tracking purposes
 
 
 # Technologies Used
 
-Google Sheets
+- Google Sheets
 
-Google Apps Script (JavaScript)
+- Google Apps Script (JavaScript)
 
-Native SpreadsheetApp services
+- Native SpreadsheetApp services
 
 
 # Purpose
